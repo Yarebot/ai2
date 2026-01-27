@@ -1,218 +1,323 @@
-pip install aiogram google-generativeai aiohttp pillow
 import asyncio
 import logging
-import sys
-import aiohttp
-from io import BytesIO
-
-# Библиотеки Telegram (aiogram 3.x)
-from aiogram import Bot, Dispatcher, Router, F, html
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode, ChatAction
-from aiogram.filters import CommandStart, Command
+from aiogram import Bot, Dispatcher, Router, F
+from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-
-# Библиотеки для AI и работы с картинками
-import google.generativeai as genai
-from PIL import Image
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # --- КОНФИГУРАЦИЯ ---
-# ⚠️ ВАЖНО: В реальном проекте храни ключи в файле .env
-BOT_TOKEN = "8350320156:AAH4Ryko_kYDpR272jlIIjT5VF_i6k8T7Ig"
-GEMINI_API_KEY = "AIzaSyDaVtOnQtBNBcS7CkWFxVDcEMY0o4Duf_Y"
-NANO_BANANA_TOKEN = "AIzaSyDaVtOnQtBNBcS7CkWFxVDcEMY0o4Duf_Y"
+# Вставьте сюда ваш токен от BotFather
+BOT_TOKEN = "ВАШ_ТОКЕН_ЗДЕСЬ"
 
-# URL API (Нужно заменить на реальные, когда будут известны)
-NANO_BANANA_URL_IMAGE = "https://api.nano-banana.com/v1/image" 
-NANO_BANANA_URL_VIDEO = "https://api.nano-banana.com/v1/video"
+# Вставьте сюда ВАШ цифровой ID (получить у @userinfobot)
+# Бот будет присылать ответы именно сюда.
+ADMIN_ID = 123456789 
 
-# Настройка Gemini
-genai.configure(api_key=GEMINI_API_KEY)
-model_gemini = genai.GenerativeModel('gemini-1.5-flash')
+# --- ЛОГИРОВАНИЕ ---
+logging.basicConfig(level=logging.INFO)
 
-# Роутер
+# --- СОСТОЯНИЯ (FSM) ---
+class Survey(StatesGroup):
+    gender = State()
+    age = State()
+    internet_change = State()
+    vpn_usage = State()
+    future_scenario = State()
+    sovereign_goal = State()
+    substitution_ready = State()
+    isolation_impact = State()
+    gov_browser = State()
+    it_development = State()
+    concerns = State()
+
+# --- ИНИЦИАЛИЗАЦИЯ ---
 router = Router()
 
-# --- МАШИНА СОСТОЯНИЙ (FSM) ---
-class BotStates(StatesGroup):
-    chat_gemini = State()    # Режим простого общения
-    generate_image = State() # Режим генерации картинок
-    generate_video = State() # Режим генерации видео
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+def make_keyboard(items: list[str], adjust: int = 1):
+    """Создает клавиатуру из списка строк"""
+    builder = InlineKeyboardBuilder()
+    for item in items:
+        builder.button(text=item, callback_data=item[:30]) # callback_data ограничен 64 байтами
+    builder.adjust(adjust)
+    return builder.as_markup()
 
-# --- КЛАВИАТУРЫ ---
-def main_menu_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Чат с AI", callback_data="mode_text")],
-        [
-            InlineKeyboardButton(text="🎨 Нарисовать", callback_data="mode_image"),
-            InlineKeyboardButton(text="🎬 Снять видео", callback_data="mode_video")
-        ],
-        [
-            InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help"),
-            InlineKeyboardButton(text="👤 О боте", callback_data="about")
-        ]
-    ])
+# --- ХЕНДЛЕРЫ (ОБРАБОТЧИКИ) ---
 
-def back_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 В главное меню", callback_data="back_home")]
-    ])
-
-# --- БАЗОВЫЕ КОМАНДЫ ---
-
-@router.message(CommandStart())
+@router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
-    text = (
-        f"👋 Привет, <b>{html.quote(message.from_user.first_name)}</b>!\n\n"
-        f"Я — <b>Nano Banana Bot</b> 🍌🤖.\n"
-        f"Я умею общаться, видеть фото и генерировать контент.\n\n"
-        f"👇 <i>Выбери действие в меню:</i>"
+    await message.answer(
+        "👋 <b>Добро пожаловать!</b>\n\n"
+        "Этот бот поможет нам собрать статистику по развитию Рунета. "
+        "Опрос полностью анонимный.\n\n"
+        "📊 <b>Раздел 1: О вас</b>", 
+        parse_mode="HTML"
     )
-    await message.answer(text, reply_markup=main_menu_kb())
-
-@router.message(Command("help"))
-async def cmd_help(message: Message):
-    text = (
-        "🆘 <b>СПРАВКА</b>\n\n"
-        "1. <b>Чат:</b> Пиши текстом, я отвечу (Gemini Flash).\n"
-        "2. <b>Зрение:</b> Просто пришли мне фото в любой момент, и я опишу его.\n"
-        "3. <b>Генерация:</b> Выбери режим в меню и пиши промпт.\n\n"
-        "Команды:\n"
-        "/start - Перезапуск бота"
+    
+    await message.answer(
+        "1. Ваш пол:",
+        reply_markup=make_keyboard(["Мужской", "Женский"], 2)
     )
-    await message.answer(text, reply_markup=back_kb())
+    await state.set_state(Survey.gender)
 
-# --- НАВИГАЦИЯ ПО МЕНЮ ---
+# 1 -> 2
+@router.callback_query(Survey.gender)
+async def process_gender(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(gender=callback.data) # Сохраняем ответ (берем из текста кнопки для простоты)
+    # Текст кнопки может быть обрезан в callback_data, поэтому лучше брать label, 
+    # но для простого примера берем data, так как ключи уникальны.
+    # В идеале нужно мапить callback_data на полный ответ. 
+    # Здесь для упрощения мы сохраним то, что пришло в callback (первые 30 символов).
+    # Для красоты возьмем полный текст из сообщения, на которое нажали (сложнее), 
+    # или просто передадим список вариантов заново.
+    
+    # Чтобы сохранить полный текст ответа, сделаем хитрее:
+    full_answer = [b.text for row in callback.message.reply_markup.inline_keyboard for b in row if b.callback_data == callback.data][0]
+    await state.update_data(gender=full_answer)
 
-@router.callback_query(F.data == "back_home")
-async def go_home(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await callback.message.edit_text(f"✅ Пол: {full_answer}")
+
+    await callback.message.answer(
+        "2. Ваш возраст:",
+        reply_markup=make_keyboard([
+            "до 14 лет", "14–17 лет", "18–24 года", 
+            "25–34 года", "35–44 года", "45–54 года", 
+            "55 лет и старше"
+        ], 2)
+    )
+    await state.set_state(Survey.age)
+
+# 2 -> 3
+@router.callback_query(Survey.age)
+async def process_age(callback: CallbackQuery, state: FSMContext):
+    full_answer = [b.text for row in callback.message.reply_markup.inline_keyboard for b in row if b.callback_data == callback.data][0]
+    await state.update_data(age=full_answer)
+    await callback.answer()
+    await callback.message.edit_text(f"✅ Возраст: {full_answer}")
+
+    await callback.message.answer("📊 <b>Раздел 2: Оценка текущей ситуации</b>", parse_mode="HTML")
+    await callback.message.answer(
+        "3. Как вы оцениваете изменения в работе интернета в России за последний год?",
+        reply_markup=make_keyboard([
+            "Стало значительно лучше",
+            "Ничего не изменилось",
+            "Стало немного хуже",
+            "Стало значительно хуже",
+            "Затрудняюсь ответить"
+        ], 1)
+    )
+    await state.set_state(Survey.internet_change)
+
+# 3 -> 4
+@router.callback_query(Survey.internet_change)
+async def process_internet_change(callback: CallbackQuery, state: FSMContext):
+    full_answer = [b.text for row in callback.message.reply_markup.inline_keyboard for b in row if b.callback_data == callback.data][0]
+    await state.update_data(internet_change=full_answer)
+    await callback.answer()
+    await callback.message.edit_text(f"✅ Оценка: {full_answer}")
+
+    await callback.message.answer(
+        "4. Как часто вы используете средства обхода блокировок (VPN и др.)?",
+        reply_markup=make_keyboard([
+            "Постоянно",
+            "Часто",
+            "Редко",
+            "Никогда / Не умею"
+        ], 1)
+    )
+    await state.set_state(Survey.vpn_usage)
+
+# 4 -> 5
+@router.callback_query(Survey.vpn_usage)
+async def process_vpn(callback: CallbackQuery, state: FSMContext):
+    full_answer = [b.text for row in callback.message.reply_markup.inline_keyboard for b in row if b.callback_data == callback.data][0]
+    await state.update_data(vpn_usage=full_answer)
+    await callback.answer()
+    await callback.message.edit_text(f"✅ VPN: {full_answer}")
+
+    await callback.message.answer("📊 <b>Раздел 3: Сценарии будущего</b>", parse_mode="HTML")
+    await callback.message.answer(
+        "5. Какой сценарий развития Рунета в ближайшие 5 лет кажется вам наиболее вероятным?",
+        reply_markup=make_keyboard([
+            "Полная изоляция (интранет)",
+            "«Китайский вариант»",
+            "Суверенный, но открытый",
+            "Либерализация",
+            "Другое"
+        ], 1)
+    )
+    await state.set_state(Survey.future_scenario)
+
+# 5 -> 6
+@router.callback_query(Survey.future_scenario)
+async def process_scenario(callback: CallbackQuery, state: FSMContext):
+    full_answer = [b.text for row in callback.message.reply_markup.inline_keyboard for b in row if b.callback_data == callback.data][0]
+    await state.update_data(future_scenario=full_answer)
+    await callback.answer()
+    await callback.message.edit_text(f"✅ Сценарий: {full_answer}")
+
+    await callback.message.answer(
+        "6. В чем, по вашему мнению, главная цель закона о «суверенном интернете»?",
+        reply_markup=make_keyboard([
+            "Защита от киберугроз",
+            "Цензура и контроль",
+            "Поддержка IT-компаний",
+            "Техническая необходимость"
+        ], 1)
+    )
+    await state.set_state(Survey.sovereign_goal)
+
+# 6 -> 7
+@router.callback_query(Survey.sovereign_goal)
+async def process_goal(callback: CallbackQuery, state: FSMContext):
+    full_answer = [b.text for row in callback.message.reply_markup.inline_keyboard for b in row if b.callback_data == callback.data][0]
+    await state.update_data(sovereign_goal=full_answer)
+    await callback.answer()
+    await callback.message.edit_text(f"✅ Цель: {full_answer}")
+
+    await callback.message.answer("📊 <b>Раздел 4: Импортозамещение и сервисы</b>", parse_mode="HTML")
+    await callback.message.answer(
+        "7. Готовы ли вы отказаться от зарубежных платформ в пользу российских?\n(1 - Не готов, 5 - Готов)",
+        reply_markup=make_keyboard(["1", "2", "3", "4", "5"], 5)
+    )
+    await state.set_state(Survey.substitution_ready)
+
+# 7 -> 8
+@router.callback_query(Survey.substitution_ready)
+async def process_substitution(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(substitution_ready=callback.data)
+    await callback.answer()
+    await callback.message.edit_text(f"✅ Готовность: {callback.data}")
+
+    await callback.message.answer(
+        "8. Если доступ к глобальному интернету перекроют, как это повлияет на вашу работу/учебу?",
+        reply_markup=make_keyboard([
+            "Станет невозможной",
+            "Серьезные трудности",
+            "Повлияет незначительно",
+            "Никак не повлияет"
+        ], 1)
+    )
+    await state.set_state(Survey.isolation_impact)
+
+# 8 -> 9
+@router.callback_query(Survey.isolation_impact)
+async def process_impact(callback: CallbackQuery, state: FSMContext):
+    full_answer = [b.text for row in callback.message.reply_markup.inline_keyboard for b in row if b.callback_data == callback.data][0]
+    await state.update_data(isolation_impact=full_answer)
+    await callback.answer()
+    await callback.message.edit_text(f"✅ Влияние: {full_answer}")
+
+    await callback.message.answer(
+        "9. Ваше отношение к созданию единого гос. браузера и сертификатов шифрования?",
+        reply_markup=make_keyboard([
+            "Положительно",
+            "Нейтрально",
+            "Отрицательно",
+            "Мне все равно"
+        ], 1)
+    )
+    await state.set_state(Survey.gov_browser)
+
+# 9 -> 10
+@router.callback_query(Survey.gov_browser)
+async def process_browser(callback: CallbackQuery, state: FSMContext):
+    full_answer = [b.text for row in callback.message.reply_markup.inline_keyboard for b in row if b.callback_data == callback.data][0]
+    await state.update_data(gov_browser=full_answer)
+    await callback.answer()
+    await callback.message.edit_text(f"✅ Отношение: {full_answer}")
+
+    await callback.message.answer("📊 <b>Раздел 5: Итоги</b>", parse_mode="HTML")
+    await callback.message.answer(
+        "10. Поможет ли изоляция развитию российских IT-технологий?",
+        reply_markup=make_keyboard([
+            "Да, даст толчок",
+            "Нет, приведет к застою",
+            "Приведет к оттоку кадров",
+            "Сложно сказать"
+        ], 1)
+    )
+    await state.set_state(Survey.it_development)
+
+# 10 -> 11
+@router.callback_query(Survey.it_development)
+async def process_dev(callback: CallbackQuery, state: FSMContext):
+    full_answer = [b.text for row in callback.message.reply_markup.inline_keyboard for b in row if b.callback_data == callback.data][0]
+    await state.update_data(it_development=full_answer)
+    await callback.answer()
+    await callback.message.edit_text(f"✅ Эффект: {full_answer}")
+
+    # Вопрос 11. Для простоты реализации в Telegram делаем выбор самого главного фактора
+    # (Множественный выбор значительно усложняет UX и код для такого примера)
+    await callback.message.answer(
+        "11. Что вызывает у вас НАИБОЛЬШЕЕ беспокойство?",
+        reply_markup=make_keyboard([
+            "Рост цен на интернет",
+            "Отсутствие информации",
+            "Потеря контента (игры/видео)",
+            "Снижение скорости",
+            "Утечки данных",
+            "Ничего не беспокоит"
+        ], 1)
+    )
+    await state.set_state(Survey.concerns)
+
+# Финиш
+@router.callback_query(Survey.concerns)
+async def process_finish(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    full_answer = [b.text for row in callback.message.reply_markup.inline_keyboard for b in row if b.callback_data == callback.data][0]
+    await state.update_data(concerns=full_answer)
+    
+    # Получаем все данные
+    data = await state.get_data()
+    user = callback.from_user
+    username = f"@{user.username}" if user.username else "Скрыт"
+    
+    # Формируем отчет для админа
+    report = (
+        f"📝 <b>НОВЫЙ ОТВЕТ НА ОПРОС</b>\n"
+        f"👤 Пользователь: {user.full_name} ({username}, ID: {user.id})\n\n"
+        f"1. Пол: {data.get('gender')}\n"
+        f"2. Возраст: {data.get('age')}\n"
+        f"3. Изменения: {data.get('internet_change')}\n"
+        f"4. VPN: {data.get('vpn_usage')}\n"
+        f"5. Сценарий: {data.get('future_scenario')}\n"
+        f"6. Цель суверенитета: {data.get('sovereign_goal')}\n"
+        f"7. Отказ от зарубежного: {data.get('substitution_ready')}/5\n"
+        f"8. Влияние на работу: {data.get('isolation_impact')}\n"
+        f"9. Гос. браузер: {data.get('gov_browser')}\n"
+        f"10. Развитие IT: {data.get('it_development')}\n"
+        f"11. Беспокойство: {data.get('concerns')}"
+    )
+
+    # Отправляем пользователю
+    await callback.answer()
+    await callback.message.edit_text(f"✅ Беспокойство: {full_answer}")
+    await callback.message.answer("🎉 <b>Спасибо! Опрос завершен.</b> Ваши ответы записаны.", parse_mode="HTML")
+    
+    # Отправляем админу
+    try:
+        await bot.send_message(chat_id=ADMIN_ID, text=report, parse_mode="HTML")
+    except Exception as e:
+        logging.error(f"Не удалось отправить отчет админу: {e}")
+
     await state.clear()
-    await callback.message.edit_text("🏠 <b>Главное меню</b>", reply_markup=main_menu_kb())
-
-@router.callback_query(F.data == "help")
-async def cb_help(callback: CallbackQuery):
-    await callback.message.edit_text(
-        "🆘 <b>Инструкция</b>\nВыбери режим и следуй указаниям.\nЯ понимаю русский язык.",
-        reply_markup=back_kb()
-    )
-
-@router.callback_query(F.data == "about")
-async def cb_about(callback: CallbackQuery):
-    await callback.message.edit_text(
-        "👤 <b>О боте</b>\nВерсия: 2.0\nДвижок: aiogram + Gemini\nТокен: Nano Banana",
-        reply_markup=back_kb()
-    )
-
-# --- ФУНКЦИЯ: ЗРЕНИЕ (РАБОТАЕТ ВСЕГДА) ---
-@router.message(F.photo)
-async def handle_photo_vision(message: Message, bot: Bot):
-    # Эта функция срабатывает, если юзер прислал фото (независимо от режима)
-    await bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.UPLOAD_PHOTO)
-    
-    # Скачиваем фото
-    photo_file = await bot.download(message.photo[-1])
-    image = Image.open(photo_file)
-    
-    # Если есть подпись к фото, используем её как вопрос
-    prompt = message.caption if message.caption else "Что изображено на этом фото? Опиши подробно."
-    
-    wait_msg = await message.reply("👀 <i>Анализирую изображение...</i>")
-    
-    try:
-        response = model_gemini.generate_content([prompt, image])
-        await wait_msg.delete()
-        await message.reply(response.text, parse_mode="Markdown")
-    except Exception as e:
-        await wait_msg.edit_text(f"⚠️ Ошибка зрения: {e}")
-
-# --- РЕЖИМ 1: ТЕКСТОВЫЙ ЧАТ ---
-
-@router.callback_query(F.data == "mode_text")
-async def start_text(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(BotStates.chat_gemini)
-    await callback.message.edit_text(
-        "💬 <b>Режим чата</b>\nПиши любой вопрос или тему:",
-        reply_markup=back_kb()
-    )
-
-@router.message(BotStates.chat_gemini)
-async def process_text_gemini(message: Message):
-    await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
-    try:
-        response = model_gemini.generate_content(message.text)
-        await message.answer(response.text, parse_mode="Markdown")
-    except Exception as e:
-        await message.answer(f"Ошибка: {e}")
-
-# --- РЕЖИМ 2: ГЕНЕРАЦИЯ ФОТО (NANO BANANA) ---
-
-@router.callback_query(F.data == "mode_image")
-async def start_image(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(BotStates.generate_image)
-    await callback.message.edit_text(
-        "🎨 <b>Генерация Фото</b>\nОпиши, что нарисовать (на английском точнее):",
-        reply_markup=back_kb()
-    )
-
-@router.message(BotStates.generate_image)
-async def process_image_gen(message: Message):
-    await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.UPLOAD_PHOTO)
-    wait_msg = await message.answer(f"🍌 Использую Nano Banana ({message.text})...")
-    
-    # СИМУЛЯЦИЯ ЗАПРОСА (Так как нет реального URL)
-    try:
-        # Здесь должен быть код:
-        # async with aiohttp.ClientSession() as session:
-        #     resp = await session.post(NANO_BANANA_URL_IMAGE, json={"prompt": message.text}, headers={"Authorization": NANO_BANANA_TOKEN})
-        #     result = await resp.json()
-        
-        await asyncio.sleep(2) # Имитация работы
-        
-        # Заглушка, так как URL фейковый. В реальности тут был бы URL картинки.
-        await wait_msg.edit_text(
-            "⚠️ <b>Статус API:</b>\n"
-            "Сервер Nano Banana не ответил (неверный URL).\n"
-            "Но логика бота работает! Вставьте верный URL в переменную `NANO_BANANA_URL_IMAGE`.",
-            reply_markup=back_kb()
-        )
-    except Exception as e:
-        await wait_msg.edit_text(f"Ошибка API: {e}")
-
-# --- РЕЖИМ 3: ГЕНЕРАЦИЯ ВИДЕО ---
-
-@router.callback_query(F.data == "mode_video")
-async def start_video(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(BotStates.generate_video)
-    await callback.message.edit_text(
-        "🎬 <b>Генерация Видео</b>\nОпиши сцену для видео:",
-        reply_markup=back_kb()
-    )
-
-@router.message(BotStates.generate_video)
-async def process_video_gen(message: Message):
-    await message.answer("🛠 Генерация видео временно недоступна (ожидание API Nano Banana).", reply_markup=back_kb())
 
 # --- ЗАПУСК ---
-
 async def main():
-    # Включаем логирование, чтобы видеть ошибки в консоли
-    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
-    
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
     dp.include_router(router)
     
-    # Удаляем старые обновления (чтобы бот не отвечал на старые сообщения при запуске)
-    await bot.delete_webhook(drop_pending_updates=True)
-    
-    print("🚀 Nano Banana Bot запущен! Нажми /start в Telegram.")
+    print("Бот запущен...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Бот остановлен.")
+        print("Бот остановлен")
