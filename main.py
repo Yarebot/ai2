@@ -1,39 +1,182 @@
-import asyncio
-import logging
-from aiogram import Bot, Dispatcher, Router, F
-from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+import telebot
+from telebot import types
 
-# --- КОНФИГУРАЦИЯ ---
-# Вставьте сюда ваш токен от BotFather
-BOT_TOKEN = "ВАШ_ТОКЕН_ЗДЕСЬ"
+# --- НАСТРОЙКИ ---
+TOKEN = 'YOUR_BOT_TOKEN_HERE'  # Вставь сюда токен от BotFather
+ADMIN_ID = 123456789            # Вставь сюда СВОЙ цифровой ID (не юзернейм!)
 
-# Вставьте сюда ВАШ цифровой ID (получить у @userinfobot)
-# Бот будет присылать ответы именно сюда.
-ADMIN_ID = 123456789 
+bot = telebot.TeleBot(TOKEN)
 
-# --- ЛОГИРОВАНИЕ ---
-logging.basicConfig(level=logging.INFO)
+# --- ДАННЫЕ ОПРОСА ---
+# Структура: вопрос и варианты ответов
+SURVEY_DATA = [
+    # Раздел 1
+    {
+        "section": "Раздел 1. О вас",
+        "question": "1. Ваш пол:",
+        "options": ["Мужской", "Женский"]
+    },
+    {
+        "section": "Раздел 1. О вас",
+        "question": "2. Ваш возраст:",
+        "options": ["До 14 лет", "14–17 лет", "18–24 года", "25–34 года", "35–44 года", "45–54 года", "55+"]
+    },
+    # Раздел 2
+    {
+        "section": "Раздел 2. Интернет сегодня",
+        "question": "3. Как изменился интернет в РФ за последний год?",
+        "options": ["Стал лучше", "Без изменений", "Стал немного хуже", "Стал значительно хуже", "Затрудняюсь"]
+    },
+    {
+        "section": "Раздел 2. Интернет сегодня",
+        "question": "4. Как часто вы используете VPN/Proxy?",
+        "options": ["Постоянно", "Часто (ежедневно)", "Редко", "Никогда / Не умею"]
+    },
+    # Раздел 3
+    {
+        "section": "Раздел 3. Будущее Рунета",
+        "question": "5. Вероятный сценарий развития на 5 лет:",
+        "options": ["Полная изоляция (Интранет)", "«Китайский вариант»", "Суверенный, но открытый", "Либерализация", "Другое"]
+    },
+    {
+        "section": "Раздел 3. Будущее Рунета",
+        "question": "6. Главная цель «суверенного интернета»:",
+        "options": ["Защита от киберугроз", "Политическая цензура", "Поддержка IT-компаний", "Техническая необходимость"]
+    },
+    # Раздел 4
+    {
+        "section": "Раздел 4. Импортозамещение",
+        "question": "7. Готовы ли отказаться от YouTube/Google в пользу наших аналогов? (1-нет, 5-да)",
+        "options": ["1 (Не готов)", "2", "3", "4", "5 (Полностью готов)"]
+    },
+    {
+        "section": "Раздел 4. Импортозамещение",
+        "question": "8. Как ограничение глобальной сети повлияет на вас?",
+        "options": ["Станет невозможной работа/учеба", "Серьезные трудности", "Незначительно", "Не повлияет"]
+    },
+    {
+        "section": "Раздел 4. Импортозамещение",
+        "question": "9. Отношение к гос. браузеру и сертификатам:",
+        "options": ["Положительно", "Нейтрально", "Отрицательно", "Мне всё равно"]
+    },
+    # Раздел 5
+    {
+        "section": "Раздел 5. Итоги",
+        "question": "10. Поможет ли изоляция развитию IT в РФ?",
+        "options": ["Да, даст импульс", "Нет, будет застой", "Усилит отток кадров", "Сложно сказать"]
+    },
+    {
+        "section": "Раздел 5. Итоги",
+        "question": "11. Что вызывает наибольшее беспокойство?",
+        "options": ["Рост цен", "Отсутствие объективной инфо", "Потеря контента", "Скорость соединения", "Утечки данных", "Ничего не беспокоит"]
+    }
+]
 
-# --- СОСТОЯНИЯ (FSM) ---
-class Survey(StatesGroup):
-    gender = State()
-    age = State()
-    internet_change = State()
-    vpn_usage = State()
-    future_scenario = State()
-    sovereign_goal = State()
-    substitution_ready = State()
-    isolation_impact = State()
-    gov_browser = State()
-    it_development = State()
-    concerns = State()
+# Хранилище ответов: {chat_id: [ответ_0, ответ_1, ...]}
+user_answers = {}
 
-# --- ИНИЦИАЛИЗАЦИЯ ---
-router = Router()
+# --- ЛОГИКА ---
+
+@bot.message_handler(commands=['start'])
+def start_survey(message):
+    # Очищаем старые ответы пользователя
+    user_answers[message.chat.id] = []
+    
+    text = (
+        f"👋 Привет, {message.from_user.first_name}!\n\n"
+        "🌐 **Тема опроса:** Будущее интернета в России: изоляция или развитие.\n"
+        "Опрос анонимный, займет 1 минуту."
+    )
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🚀 Начать опрос", callback_data="start"))
+    
+    bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="Markdown")
+
+# Обработчик кнопок
+@bot.callback_query_handler(func=lambda call: True)
+def handle_query(call):
+    chat_id = call.message.chat.id
+    
+    # Если нажали старт
+    if call.data == "start":
+        user_answers[chat_id] = [] # Сброс
+        send_question(chat_id, call.message.message_id, 0)
+        return
+
+    # Если нажали вариант ответа (формат 'ans_номерВопроса_номерОтвета')
+    if call.data.startswith("ans_"):
+        parts = call.data.split('_')
+        q_index = int(parts[1])
+        ans_index = int(parts[2])
+        
+        # Сохраняем ответ (текст ответа)
+        selected_option = SURVEY_DATA[q_index]['options'][ans_index]
+        # Проверяем, не отвечал ли пользователь уже на этот вопрос (защита от дабл-клика)
+        if len(user_answers.get(chat_id, [])) == q_index:
+             user_answers[chat_id].append(selected_option)
+        
+        # Следующий вопрос
+        next_q = q_index + 1
+        
+        if next_q < len(SURVEY_DATA):
+            send_question(chat_id, call.message.message_id, next_q)
+        else:
+            finish_survey(chat_id, call.message.message_id, call.from_user)
+
+# Функция отправки/обновления вопроса
+def send_question(chat_id, message_id, index):
+    data = SURVEY_DATA[index]
+    
+    text = f"📋 *{data['section']}*\n\n**{data['question']}**"
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    # Генерируем кнопки
+    for i, option in enumerate(data['options']):
+        markup.add(types.InlineKeyboardButton(option, callback_data=f"ans_{index}_{i}"))
+    
+    bot.edit_message_text(
+        chat_id=chat_id, 
+        message_id=message_id, 
+        text=text, 
+        reply_markup=markup, 
+        parse_mode="Markdown"
+    )
+
+# Финал опроса + Отправка отчета админу
+def finish_survey(chat_id, message_id, user_info):
+    answers = user_answers.get(chat_id, [])
+    
+    # 1. Показываем пользователю благодарность
+    final_text = (
+        "✅ **Спасибо! Ваши ответы приняты.**\n\n"
+        "Мы учтем ваше мнение при анализе будущего Рунета."
+    )
+    bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=final_text, reply_markup=None, parse_mode="Markdown")
+    
+    # 2. Формируем отчет для Админа
+    username = f"@{user_info.username}" if user_info.username else "Нет юзернейма"
+    user_link = f"[{user_info.first_name}](tg://user?id={user_info.id})"
+    
+    report = f"📊 **НОВЫЙ ОТВЕТ НА ОПРОС**\n"
+    report += f"👤 Пользователь: {user_link} ({username})\n"
+    report += "-" * 20 + "\n"
+    
+    for i, ans in enumerate(answers):
+        q_text = SURVEY_DATA[i]['question']
+        report += f"❓ {i+1}. {q_text}\n💡 **{ans}**\n\n"
+        
+    # 3. Отправляем отчет админу
+    try:
+        bot.send_message(ADMIN_ID, report, parse_mode="Markdown")
+    except Exception as e:
+        print(f"Ошибка отправки админу: {e}")
+
+# Запуск
+if __name__ == '__main__':
+    print("Бот опроса запущен...")
+    bot.infinity_polling()
+
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def make_keyboard(items: list[str], adjust: int = 1):
