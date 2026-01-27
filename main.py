@@ -2,8 +2,8 @@ import telebot
 from telebot import types
 
 # --- НАСТРОЙКИ ---
-TOKEN = 'YOUR_BOT_TOKEN_HERE'  # Вставь сюда токен от BotFather
-ADMIN_ID = 123456789            # Вставь сюда СВОЙ цифровой ID (не юзернейм!)
+TOKEN = '8347457619:AAGZebaa9UQxkaXWaNmzRiR9D01dnc3haKQ'  # Вставь сюда токен от BotFather
+ADMIN_ID = 6161950750            # Вставь сюда СВОЙ цифровой ID (не юзернейм!)
 
 bot = telebot.TeleBot(TOKEN)
 
